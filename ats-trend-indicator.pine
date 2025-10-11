@@ -31,11 +31,13 @@ if bearishFVG
 
 // ===== GROUP SEPARATION (CLUSTER PIVOT) DETECTION =====
 // Pivot Low detection for bullish cluster support
-pivotLow = ta.pivotlow(low, 2, 2)
+// Use lookbackWindow for more significant cluster identification
+pivotLow = ta.pivotlow(low, lookbackWindow, lookbackWindow)
 clusterSupportLevel = not na(pivotLow) ? pivotLow : na
 
-// Pivot High detection for bearish cluster resistance  
-pivotHigh = ta.pivothigh(high, 2, 2)
+// Pivot High detection for bearish cluster resistance
+// Use lookbackWindow for more significant cluster identification
+pivotHigh = ta.pivothigh(high, lookbackWindow, lookbackWindow)
 clusterResistanceLevel = not na(pivotHigh) ? pivotHigh : na
 
 // Update last cluster levels when detected (within lookback window)
@@ -46,20 +48,20 @@ if not na(clusterResistanceLevel) and bar_index - ta.valuewhen(not na(clusterRes
     lastClusterResistance := clusterResistanceLevel
 
 // ===== TREND DIRECTION STATE MACHINE =====
-// Initial trend establishment from FVG
+// Initial trend establishment from FVG (only sets direction, line is handled in hierarchical logic)
 if bullishFVG and trendDirection != "Up"
     trendDirection := "Up"
-    trendLine := lastFVGSupport
+    // trendLine is set in hierarchical logic section below
     
-if bearishFVG and trendDirection != "Down"  
+if bearishFVG and trendDirection != "Down"
     trendDirection := "Down"
-    trendLine := lastFVGResistance
+    // trendLine is set in hierarchical logic section below
 
 // ===== HIERARCHICAL TREND LINE UPDATE LOGIC =====
 // For bullish trend: choose tightest valid support (highest of available levels)
 if trendDirection == "Up"
-    // Start with previous trend line as base
-    float newTrendLine = nz(trendLine[1])
+    // Start with previous trend line as base, or FVG level if just flipped from neutral
+    float newTrendLine = na(trendLine[1]) ? lastFVGSupport : nz(trendLine[1])
     
     // Update with FVG support if available and higher
     if not na(lastFVGSupport) and lastFVGSupport > newTrendLine
@@ -73,8 +75,8 @@ if trendDirection == "Up"
 
 // For bearish trend: choose tightest valid resistance (lowest of available levels)        
 if trendDirection == "Down"
-    // Start with previous trend line as base
-    float newTrendLine = nz(trendLine[1])
+    // Start with previous trend line as base, or FVG level if just flipped from neutral
+    float newTrendLine = na(trendLine[1]) ? lastFVGResistance : nz(trendLine[1])
     
     // Update with FVG resistance if available and lower
     if not na(lastFVGResistance) and lastFVGResistance < newTrendLine
