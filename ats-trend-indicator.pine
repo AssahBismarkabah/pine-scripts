@@ -1,0 +1,142 @@
+//@version=5
+indicator("ATS Trend Indicator", "ATS Trend", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ===== USER CONFIGURATION SETINGS =====
+lookbackWindow = input.int(8, "Lookback Window", minval=5, maxval=20, tooltip="Number of bars to look back for cluster pivot detection")
+showDiagnostics = input.bool(false, "Show Diagnostic Plots", tooltip="Display FVG and cluster levels for debugging")
+showBackground = input.bool(true, "Show Trend Background", tooltip="Color background based on trend direction")
+
+// ===== CORE STATE VARIABLES =====
+var string trendDirection = "Neutral"
+var float trendLine = na
+var float lastFVGSupport = na
+var float lastFVGResistance = na
+var float lastClusterSupport = na
+var float lastClusterResistance = na
+
+// ===== 3-CANDLE FVG DETECTION =====
+// Bullish FVG: C3 low > C1 high (low[2] > high)
+bullishFVG = low[2] > high
+bearishFVG = high[2] < low
+
+// Store FVG levels
+fvgSupportLevel = bullishFVG ? high : na
+fvgResistanceLevel = bearishFVG ? low : na
+
+// Update last FVG levels when detected
+if bullishFVG
+    lastFVGSupport := high
+if bearishFVG
+    lastFVGResistance := low
+
+// ===== GROUP SEPARATION (CLUSTER PIVOT) DETECTION =====
+// Pivot Low detection for bullish cluster support
+pivotLow = ta.pivotlow(low, 2, 2)
+clusterSupportLevel = not na(pivotLow) ? pivotLow : na
+
+// Pivot High detection for bearish cluster resistance  
+pivotHigh = ta.pivothigh(high, 2, 2)
+clusterResistanceLevel = not na(pivotHigh) ? pivotHigh : na
+
+// Update last cluster levels when detected (within lookback window)
+if not na(clusterSupportLevel) and bar_index - ta.valuewhen(not na(clusterSupportLevel), bar_index, 0) <= lookbackWindow
+    lastClusterSupport := clusterSupportLevel
+    
+if not na(clusterResistanceLevel) and bar_index - ta.valuewhen(not na(clusterResistanceLevel), bar_index, 0) <= lookbackWindow
+    lastClusterResistance := clusterResistanceLevel
+
+// ===== TREND DIRECTION STATE MACHINE =====
+// Initial trend establishment from FVG
+if bullishFVG and trendDirection != "Up"
+    trendDirection := "Up"
+    trendLine := lastFVGSupport
+    
+if bearishFVG and trendDirection != "Down"  
+    trendDirection := "Down"
+    trendLine := lastFVGResistance
+
+// ===== HIERARCHICAL TREND LINE UPDATE LOGIC =====
+// For bullish trend: choose tightest valid support (highest of available levels)
+if trendDirection == "Up"
+    // Start with previous trend line as base
+    float newTrendLine = nz(trendLine[1])
+    
+    // Update with FVG support if available and higher
+    if not na(lastFVGSupport) and lastFVGSupport > newTrendLine
+        newTrendLine := lastFVGSupport
+    
+    // Update with cluster support if available and higher
+    if not na(lastClusterSupport) and lastClusterSupport > newTrendLine
+        newTrendLine := lastClusterSupport
+    
+    trendLine := newTrendLine
+
+// For bearish trend: choose tightest valid resistance (lowest of available levels)        
+if trendDirection == "Down"
+    // Start with previous trend line as base
+    float newTrendLine = nz(trendLine[1])
+    
+    // Update with FVG resistance if available and lower
+    if not na(lastFVGResistance) and lastFVGResistance < newTrendLine
+        newTrendLine := lastFVGResistance
+    
+    // Update with cluster resistance if available and lower
+    if not na(lastClusterResistance) and lastClusterResistance < newTrendLine
+        newTrendLine := lastClusterResistance
+    
+    trendLine := newTrendLine
+
+// ===== TREND INVALIDATION LOGIC =====
+// Bullish trend invalidated when price closes below trend line
+if trendDirection == "Up" and close < trendLine
+    trendDirection := "Down"
+    trendLine := high  // Reset to current high
+    lastFVGSupport := na
+    lastClusterSupport := na
+
+// Bearish trend invalidated when price closes above trend line    
+if trendDirection == "Down" and close > trendLine
+    trendDirection := "Up"  
+    trendLine := low   // Reset to current low
+    lastFVGResistance := na
+    lastClusterResistance := na
+
+// ===== VISUALIZATION =====
+// Main ATS Trend Line
+lineColor = trendDirection == "Up" ? color.green : 
+           trendDirection == "Down" ? color.red : color.gray
+
+plot(trendLine, "ATS Trend Line", lineColor, 2, plot.style_line)
+
+// Background color for trend direction
+bgcolor(showBackground ? (trendDirection == "Up" ? color.new(color.green, 95) : trendDirection == "Down" ? color.new(color.red, 95) : na) : na)
+
+// Diagnostic plots (optional)
+plot(showDiagnostics ? fvgSupportLevel : na, "FVG Support", color.blue, style=plot.style_cross, linewidth=2)
+plot(showDiagnostics ? fvgResistanceLevel : na, "FVG Resistance", color.orange, style=plot.style_cross, linewidth=2)
+plot(showDiagnostics ? clusterSupportLevel : na, "Cluster Support", color.lime, style=plot.style_circles, linewidth=3)
+plot(showDiagnostics ? clusterResistanceLevel : na, "Cluster Resistance", color.fuchsia, style=plot.style_circles, linewidth=3)
+
+// ===== ALERTS =====
+// Trend direction change alerts
+alertcondition(trendDirection != trendDirection[1], "Trend Direction Change", "Trend direction has changed to {{trendDirection}}")
+
+// Trend line break alerts  
+alertcondition(trendDirection == "Up" and close < trendLine, "Bullish Trend Break", "Price broke below bullish trend line")
+alertcondition(trendDirection == "Down" and close > trendLine, "Bearish Trend Break", "Price broke above bearish trend line")
+
+// ===== DOCUMENTATION =====
+// This indicator combines proprietary ATS logic combining:
+// 1. 3-Candle Separation (Fair Value Gap) for objective trend establishment
+// 2. Group Separation (Cluster Pivots) for aggressive trailing during momentum
+//
+// The hierarchical logic always selects the tightest valid inefficiency boundary
+// to create a single dynamic trend line that acts as an ultimate trailing stop
+//
+// USAGE:
+// - LONG: When price is above white line and trend direction is "Up"
+// - SHORT: When price is below white line and trend direction is "Down" 
+// - TREND FLIP: When price closes opposite the current trend line direction
+//
+// The indicator provides clear invalidation signals and aggressive trailing
+// during strong trending markets while maintaining objective FVG-based protection
