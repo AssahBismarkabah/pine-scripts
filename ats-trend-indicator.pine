@@ -40,12 +40,10 @@ clusterSupportLevel = not na(pivotLow) ? pivotLow : na
 pivotHigh = ta.pivothigh(high, lookbackWindow, lookbackWindow)
 clusterResistanceLevel = not na(pivotHigh) ? pivotHigh : na
 
-// Update last cluster levels when detected (within lookback window)
-if not na(clusterSupportLevel) and bar_index - ta.valuewhen(not na(clusterSupportLevel), bar_index, 0) <= lookbackWindow
-    lastClusterSupport := clusterSupportLevel
-    
-if not na(clusterResistanceLevel) and bar_index - ta.valuewhen(not na(clusterResistanceLevel), bar_index, 0) <= lookbackWindow
-    lastClusterResistance := clusterResistanceLevel
+// Update last cluster levels persistently using the last non-NA pivot value
+// The 'lastCluster' variables MUST hold the value of the last *confirmed* pivot.
+lastClusterSupport := ta.valuewhen(not na(clusterSupportLevel), clusterSupportLevel, 0)
+lastClusterResistance := ta.valuewhen(not na(clusterResistanceLevel), clusterResistanceLevel, 0)
 
 // ===== TREND DIRECTION STATE MACHINE =====
 // Initial trend establishment from FVG (only sets direction, line is handled in hierarchical logic)
