@@ -2,7 +2,7 @@
 // © LuxAlgo
 
 //@version=5
-indicator("Master Pattern [LuxAlgo]", "LuxAlgo - Master Pattern Indicator", overlay = true, max_boxes_count = 500, max_lines_count = 500)
+indicator("Master Pattern with OBP[assah]", overlay = true, max_boxes_count = 500, max_lines_count = 500)
 //------------------------------------------------------------------------------
 //Settings
 //-----------------------------------------------------------------------------{
