@@ -26,6 +26,14 @@ showLiq = input(true, 'Show Liquidity Levels', group = 'Liquidity')
 bullLiqCss = input.color(color.teal, 'Upper Liquidity', group = 'Liquidity')
 bearLiqCss = input.color(color.red, 'Lower Liquidity', group = 'Liquidity')
 
+//OB Projection Settings
+showOBProj = input(true, 'Show OB Projections', group = 'OB Projections')
+obProjStyle = input.string('Dashed', 'Projection Line Style', options = ['Solid', 'Dashed', 'Dotted'], group = 'OB Projections')
+showOBLabels = input(true, 'Show Projection Labels', group = 'OB Projections')
+obBullProjCss = input.color(color.new(color.teal, 30), 'Bullish Projection', group = 'OB Projections')
+obBearProjCss = input.color(color.new(color.red, 30), 'Bearish Projection', group = 'OB Projections')
+expansionConfirmBars = input.int(3, 'Expansion Confirmation Bars', minval = 1, maxval = 10, group = 'OB Projections', tooltip = 'Number of bars to wait before confirming expansion')
+
 //-----------------------------------------------------------------------------}
 //UDT
 //-----------------------------------------------------------------------------{
@@ -34,6 +42,13 @@ type mp
     line avg
     bool breakup
     bool breakdn
+    float breakout_price
+    float expansion_extreme
+    float expansion_range
+    line ob_projection
+    label ob_label
+    bool projection_confirmed
+    bool projection_reached
 
 //-----------------------------------------------------------------------------}
 //Detect contraction
@@ -44,11 +59,16 @@ var ply = 0., var plx = 0, var plt = 0.
 var float top = na
 var float btm = na
 
+var float breakout_ref = na
+var float expansion_tracking = na
+var bool expansion_confirmed = false
+var int expansion_start_bar = na
+
 n = bar_index
 ph = ta.pivothigh(length, length)
 pl = ta.pivotlow(length, length)
 
-if ph
+if not na(ph)
     pht := math.sign(ph - phy)
     phy := ph
 
@@ -57,7 +77,7 @@ if ph
         btm := ply
         phx := n-length
 
-if pl
+if not na(pl)
     plt := math.sign(pl - ply)
     ply := pl
 
@@ -82,12 +102,25 @@ if isbull or isbear
 
     val = math.avg(top, btm)
 
+    // Initialize OB projection tracking
+    breakout_ref := isbull ? top : btm
+    expansion_tracking := isbull ? high : low
+    expansion_confirmed := false
+    expansion_start_bar := n
+
     //Create new master pattern object
     master := mp.new(
       (isbull and showBullBox) or (isbear and showBearBox) ? box.new(math.max(phx, plx), top, n-length, btm, na, bgcolor = showMinor ? color.new(css, 50) : na) : na
       , (isbull and showBullLvl) or (isbear and showBearLvl) ? line.new(n-length, val, n, val, color = showMinor ? css : na) : na
       , isbull
-      , isbear)
+      , isbear
+      , breakout_ref
+      , na
+      , na
+      , na
+      , na
+      , false
+      , false)
 
     top := na
     btm := na
@@ -119,6 +152,91 @@ if not na(master.avg)
     master.avg.set_x2(n)
 
 //-----------------------------------------------------------------------------}
+//OB Projection Tracking
+//-----------------------------------------------------------------------------{
+
+// Track expansion extreme during active breakout
+if not na(master.breakout_price) and not master.projection_confirmed
+    if master.breakup
+        // For bullish: track highest high
+        expansion_tracking := math.max(expansion_tracking, high)
+        
+        // Confirm expansion after N bars
+        if n - expansion_start_bar >= expansionConfirmBars
+            expansion_confirmed := true
+            
+    else if master.breakdn
+        // For bearish: track lowest low
+        expansion_tracking := math.min(expansion_tracking, low)
+        
+        // Confirm expansion after N bars
+        if n - expansion_start_bar >= expansionConfirmBars
+            expansion_confirmed := true
+
+// Cancel projection if price reverses back into contraction
+if not master.projection_confirmed
+    if master.breakup and low < master.breakout_price
+        expansion_confirmed := false
+        breakout_ref := na
+        expansion_tracking := na
+        
+    else if master.breakdn and high > master.breakout_price
+        expansion_confirmed := false
+        breakout_ref := na
+        expansion_tracking := na
+
+// Calculate OB projection once expansion is confirmed
+if expansion_confirmed and not master.projection_confirmed and showOBProj
+    
+    // Store expansion extreme
+    master.expansion_extreme := expansion_tracking
+    
+    // Calculate expansion range height
+    master.expansion_range := master.breakup ? (master.expansion_extreme - master.breakout_price) : (master.breakout_price - master.expansion_extreme)
+    
+    // Calculate OB projection level
+    ob_level = master.breakup ? master.expansion_extreme + master.expansion_range : master.expansion_extreme - master.expansion_range
+    
+    // Determine line style
+    line_style = obProjStyle == 'Solid' ? line.style_solid : obProjStyle == 'Dashed' ? line.style_dashed : line.style_dotted
+    
+    // Draw projection line
+    proj_color = master.breakup ? obBullProjCss : obBearProjCss
+    master.ob_projection := line.new(n, ob_level, n + 50, ob_level, color = proj_color, style = line_style, width = 2)
+    
+    // Add label if enabled
+    if showOBLabels
+        label_text = master.breakup ? "OB↑ " + str.tostring(ob_level, format.mintick) : "OB↓ " + str.tostring(ob_level, format.mintick)
+        
+        master.ob_label := label.new(n, ob_level, text = label_text, style = master.breakup ? label.style_label_up : label.style_label_down, color = proj_color, textcolor = color.white, size = size.small)
+    
+    // Mark as confirmed (static from now on)
+    master.projection_confirmed := true
+    
+    // Reset tracking variables
+    expansion_confirmed := false
+    breakout_ref := na
+    expansion_tracking := na
+
+// Track if projection is reached
+if not na(master.ob_projection) and not master.projection_reached
+    proj_level = master.ob_projection.get_y1()
+    
+    if master.breakup and high >= proj_level
+        master.projection_reached := true
+        master.ob_projection.set_style(line.style_solid)
+        master.ob_projection.set_width(3)
+        
+    else if master.breakdn and low <= proj_level
+        master.projection_reached := true
+        master.ob_projection.set_style(line.style_solid)
+        master.ob_projection.set_width(3)
+
+// Extend projection line to current bar if not reached
+if not na(master.ob_projection) and not master.projection_reached
+    master.ob_projection.set_x2(n)
+
+//-----------------------------------------------------------------------------}
 //Liquidity levels
 //-----------------------------------------------------------------------------{
 var line liqup = na, var liqup_reach = false
@@ -128,7 +246,7 @@ liqph = ta.pivothigh(liqLength, liqLength)
 liqpl = ta.pivotlow(liqLength, liqLength)
 
 //Set upper liquidity
-if liqph and showLiq
+if not na(liqph) and showLiq
     if not liqup_reach
         liqup.set_x2(n-liqLength)
 
@@ -141,7 +259,7 @@ else if not liqup_reach and showLiq
         liqup_reach := true
 
 //Set lower liquidity
-if liqpl and showLiq
+if not na(liqpl) and showLiq
     if not liqdn_reach
         liqdn.set_x2(n-liqLength)
 
