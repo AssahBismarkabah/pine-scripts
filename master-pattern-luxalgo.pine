@@ -13,13 +13,9 @@ showMajor = input(true, 'Show Major Pattern')
 showMinor = input(true, 'Show Minor Pattern')
 
 //Style
-bullCss = input.color(color.teal, 'Bullish Pattern', inline = 'bull', group = 'Pattern Style')
-showBullBox = input(true, 'Area', inline = 'bull', group = 'Pattern Style')
-showBullLvl = input(true, 'Line', inline = 'bull', group = 'Pattern Style')
-
-bearCss = input.color(color.red, 'Bearish Pattern', inline = 'bear', group = 'Pattern Style')
-showBearBox = input(true, 'Area', inline = 'bear', group = 'Pattern Style')
-showBearLvl = input(true, 'Line', inline = 'bear', group = 'Pattern Style')
+patternCss = input.color(color.gray, 'Pattern Color', group = 'Pattern Style')
+showBox = input(true, 'Show Box Area', group = 'Pattern Style')
+showAvgLine = input(true, 'Show Average Line', group = 'Pattern Style')
 
 //Liquidity Style
 showLiq = input(true, 'Show Liquidity Levels', group = 'Liquidity')
@@ -30,9 +26,8 @@ bearLiqCss = input.color(color.red, 'Lower Liquidity', group = 'Liquidity')
 showOBProj = input(true, 'Show OB Projections', group = 'OB Projections')
 obProjStyle = input.string('Dashed', 'Projection Line Style', options = ['Solid', 'Dashed', 'Dotted'], group = 'OB Projections')
 showOBLabels = input(true, 'Show Projection Labels', group = 'OB Projections')
-obBullProjCss = input.color(color.new(color.teal, 30), 'Bullish Projection', group = 'OB Projections')
-obBearProjCss = input.color(color.new(color.red, 30), 'Bearish Projection', group = 'OB Projections')
-expansionConfirmBars = input.int(3, 'Expansion Confirmation Bars', minval = 1, maxval = 10, group = 'OB Projections', tooltip = 'Number of bars to wait before confirming expansion')
+obProjColor = input.color(color.new(color.white, 20), 'OB Projection Color', group = 'OB Projections')
+expansionConfirmBars = input.int(1, 'Expansion Confirmation Bars', minval = 1, maxval = 10, group = 'OB Projections', tooltip = 'Number of bars to wait before confirming expansion (1 = immediate)')
 
 //-----------------------------------------------------------------------------}
 //UDT
@@ -98,8 +93,6 @@ isbull = high[length] > top and top > btm
 isbear = low[length] < btm and top > btm
 
 if isbull or isbear
-    css = isbull ? bullCss : bearCss
-
     master.avg.set_x2(n-length)
 
     val = math.avg(top, btm)
@@ -112,8 +105,8 @@ if isbull or isbear
 
     //Create new master pattern object
     master := mp.new(
-      (isbull and showBullBox) or (isbear and showBearBox) ? box.new(math.max(phx, plx), top, n-length, btm, na, bgcolor = showMinor ? color.new(css, 50) : na) : na
-      , (isbull and showBullLvl) or (isbear and showBearLvl) ? line.new(n-length, val, n, val, color = showMinor ? css : na) : na
+      showBox ? box.new(math.max(phx, plx), top, n-length, btm, na, bgcolor = showMinor ? color.new(patternCss, 80) : na) : na
+      , showAvgLine ? line.new(n-length, val, n, val, color = showMinor ? patternCss : na) : na
       , isbull
       , isbear
       , breakout_ref
@@ -144,10 +137,10 @@ if master.breakup
             master.area.delete()
             master.avg.delete()
         else
-            master.area.set_border_color(bullCss)
+            master.area.set_border_color(patternCss)
             if not showMinor
-                master.area.set_bgcolor(color.new(bullCss, 50))
-                master.avg.set_color(bullCss)
+                master.area.set_bgcolor(color.new(patternCss, 80))
+                master.avg.set_color(patternCss)
 else if master.breakdn
     if high > master.area.get_top()
         // Reset projection tracking for new expansion leg
@@ -162,10 +155,10 @@ else if master.breakdn
             master.area.delete()
             master.avg.delete()
         else
-            master.area.set_border_color(bearCss)
+            master.area.set_border_color(patternCss)
             if not showMinor
-                master.area.set_bgcolor(color.new(bearCss, 50))
-                master.avg.set_color(bearCss)
+                master.area.set_bgcolor(color.new(patternCss, 80))
+                master.avg.set_color(patternCss)
 
 //Set friction level x2 coordinate to current bar
 if not na(master.avg)
@@ -181,16 +174,20 @@ if not na(master.breakout_price) and not master.projection_confirmed
         // For bullish: track highest high
         expansion_tracking := math.max(expansion_tracking, high)
         
-        // Confirm expansion after N bars
-        if n - expansion_start_bar >= expansionConfirmBars
+        // Confirm expansion after N bars OR if significant movement
+        bars_elapsed = n - expansion_start_bar
+        range_moved = expansion_tracking - master.breakout_price
+        if bars_elapsed >= expansionConfirmBars or range_moved > 0
             expansion_confirmed := true
             
     else if master.breakdn
         // For bearish: track lowest low
         expansion_tracking := math.min(expansion_tracking, low)
         
-        // Confirm expansion after N bars
-        if n - expansion_start_bar >= expansionConfirmBars
+        // Confirm expansion after N bars OR if significant movement
+        bars_elapsed = n - expansion_start_bar
+        range_moved = master.breakout_price - expansion_tracking
+        if bars_elapsed >= expansionConfirmBars or range_moved > 0
             expansion_confirmed := true
 
 // Cancel projection if price reverses back into contraction
@@ -224,18 +221,17 @@ if expansion_confirmed and not master.projection_confirmed and showOBProj
     // Calculate projection distance (bars forward based on expansion range)
     proj_bars = math.min(50, math.max(10, math.round(master.expansion_range / syminfo.mintick / 10)))
     
-    // Draw projection ray (diagonal line from expansion extreme to OB level)
-    proj_color = master.breakup ? obBullProjCss : obBearProjCss
-    master.projection_ray := line.new(n, master.expansion_extreme, n + proj_bars, ob_level, color = proj_color, style = line_style, width = 2)
+    // Draw projection ray (diagonal line from expansion extreme to OB level) - neutral color
+    master.projection_ray := line.new(n, master.expansion_extreme, n + proj_bars, ob_level, color = obProjColor, style = line_style, width = 2)
     
-    // Draw horizontal projection line at OB level
-    master.ob_projection := line.new(n + proj_bars, ob_level, n + proj_bars + 20, ob_level, color = proj_color, style = line.style_dotted, width = 1)
+    // Draw horizontal projection line at OB level - neutral color
+    master.ob_projection := line.new(n + proj_bars, ob_level, n + proj_bars + 20, ob_level, color = obProjColor, style = line.style_dotted, width = 1)
     
-    // Add label if enabled (place it at the end of diagonal ray)
+    // Add neutral label (no directional bias per transcript)
     if showOBLabels
-        label_text = master.breakup ? "OB↑ " + str.tostring(ob_level, format.mintick) : "OB↓ " + str.tostring(ob_level, format.mintick)
+        label_text = "OB " + str.tostring(ob_level, format.mintick)
         
-        master.ob_label := label.new(n + proj_bars, ob_level, text = label_text, style = master.breakup ? label.style_label_up : label.style_label_down, color = proj_color, textcolor = color.white, size = size.small)
+        master.ob_label := label.new(n + proj_bars, ob_level, text = label_text, style = label.style_label_left, color = obProjColor, textcolor = color.black, size = size.small)
     
     // Mark as confirmed (static from now on)
     master.projection_confirmed := true
