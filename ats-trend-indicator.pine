@@ -1,144 +1,184 @@
 //@version=5
-indicator("ATS Trend Indicator", "ATS Trend", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("ATS Dual Trend Indicator V5", "ATS Dual Trend", overlay=true, max_lines_count=500, max_labels_count=500)
 
-// ===== USER CONFIGURATION SETINGS =====
-lookbackWindow = input.int(8, "Lookback Window", minval=5, maxval=20, tooltip="Number of bars to look back for cluster pivot detection")
-showDiagnostics = input.bool(false, "Show Diagnostic Plots", tooltip="Display FVG and cluster levels for debugging")
-showBackground = input.bool(true, "Show Trend Background", tooltip="Color background based on trend direction")
+// =============================================================================
+//                             USER CONFIGURATION
+// =============================================================================
 
-// ===== CORE STATE VARIABLES =====
-var string trendDirection = "Neutral"
-var float trendLine = na
-var float lastFVGSupport = na
-var float lastFVGResistance = na
-var float lastClusterSupport = na
-var float lastClusterResistance = na
+// --- Global Settings ---
+showBackground = input.bool(true, "Show Background Bias (Line B)", tooltip="Colors the background based on the faster, Line B trend direction.")
+// --- End Global Settings ---
 
-// ===== 3-CANDLE FVG DETECTION =====
-// Bullish FVG: C3 low > C1 high (low[2] > high)
-bullishFVG = low[2] > high
-bearishFVG = high[2] < low
 
-// Store FVG levels
-fvgSupportLevel = bullishFVG ? high : na
-fvgResistanceLevel = bearishFVG ? low : na
+// --- Line A (Slower/Bias Trend - e.g., Daily/Weekly) ---
+lineA_header = "--- Line A (HTF Bias) Configuration ---"
+showLineA = input.bool(true, "Show Line A", group=lineA_header, tooltip="Toggle visibility for the slower trend line.")
+lookbackA = input.int(8, "Lookback Window A", minval=5, maxval=20, group=lineA_header, tooltip="Lookback for Cluster Pivots (e.g., 5 for 1W)")
+smoothingA = input.int(2, "Smoothing Length A", minval=1, maxval=10, group=lineA_header, tooltip="EMA smoothing period. Set to 1 for no smoothing.")
+colorA = input.color(color.new(color.white, 0), "Color A", group=lineA_header)
+showTrendChangeDotsA = input.bool(false, "Show Trend Change Dots A (Bias Flip)", group=lineA_header, tooltip="Marks major bias flips on the slower Line A.")
 
-// Update last FVG levels when detected
-if bullishFVG
-    lastFVGSupport := high
-if bearishFVG
-    lastFVGResistance := low
+// --- Line B (Faster/Entry Trend - e.g., 4H/30M) ---
+lineB_header = "--- Line B (LTF Entry) Configuration ---"
+showLineB = input.bool(true, "Show Line B", group=lineB_header, tooltip="Toggle visibility for the faster trend line.")
+lookbackB = input.int(15, "Lookback Window B", minval=5, maxval=20, group=lineB_header, tooltip="Lookback for Cluster Pivots (e.g., 15 for 30M)")
+smoothingB = input.int(4, "Smoothing Length B", minval=1, maxval=10, group=lineB_header, tooltip="EMA smoothing period. Set to 1 for no smoothing.")
+colorB = input.color(color.new(#00BFFF, 0), "Color B", group=lineB_header) // Default Blue for contrast
+showTrendChangeDotsB = input.bool(true, "Show Trend Change Dots B (Entry Flip)", group=lineB_header, tooltip="Marks entry/exit flips on the faster Line B.")
 
-// ===== GROUP SEPARATION (CLUSTER PIVOT) DETECTION =====
-// Pivot Low detection for bullish cluster support
-// Use lookbackWindow for more significant cluster identification
-pivotLow = ta.pivotlow(low, lookbackWindow, lookbackWindow)
-clusterSupportLevel = not na(pivotLow) ? pivotLow : na
 
-// Pivot High detection for bearish cluster resistance
-// Use lookbackWindow for more significant cluster identification
-pivotHigh = ta.pivothigh(high, lookbackWindow, lookbackWindow)
-clusterResistanceLevel = not na(pivotHigh) ? pivotHigh : na
+// =============================================================================
+//                             CORE CALCULATION FUNCTION
+// =============================================================================
+// Encapsulates the entire ATS logic to be run twice independently
 
-// Update last cluster levels when detected (within lookback window)
-if not na(clusterSupportLevel) and bar_index - ta.valuewhen(not na(clusterSupportLevel), bar_index, 0) <= lookbackWindow
-    lastClusterSupport := clusterSupportLevel
+f_calculateATS(lookbackWindow, smoothingLength) =>
+    // --- 1. STATE VARIABLES ---
+    var trendDirection = "Neutral"
+    var float trendLine = na
+    var float lastFVGSupport = na
+    var float lastFVGResistance = na
+    var float lastClusterSupport = na
+    var float lastClusterResistance = na
+
+    // --- 2. 3-CANDLE FVG DETECTION ---
+    bullishFVG = low[2] > high
+    bearishFVG = high[2] < low
     
-if not na(clusterResistanceLevel) and bar_index - ta.valuewhen(not na(clusterResistanceLevel), bar_index, 0) <= lookbackWindow
-    lastClusterResistance := clusterResistanceLevel
+    // Update last FVG levels
+    if bullishFVG
+        lastFVGSupport := high
+    if bearishFVG
+        lastFVGResistance := low
 
-// ===== TREND DIRECTION STATE MACHINE =====
-// Initial trend establishment from FVG (only sets direction, line is handled in hierarchical logic)
-if bullishFVG and trendDirection != "Up"
-    trendDirection := "Up"
-    // trendLine is set in hierarchical logic section below
+    // --- 3. CLUSTER PIVOT DETECTION ---
+    pivotLow = ta.pivotlow(low, lookbackWindow, lookbackWindow)
+    pivotHigh = ta.pivothigh(high, lookbackWindow, lookbackWindow)
     
-if bearishFVG and trendDirection != "Down"
-    trendDirection := "Down"
-    // trendLine is set in hierarchical logic section below
+    // Update last cluster levels persistently
+    lastClusterSupport := ta.valuewhen(not na(pivotLow), pivotLow, 0)
+    lastClusterResistance := ta.valuewhen(not na(pivotHigh), pivotHigh, 0)
 
-// ===== HIERARCHICAL TREND LINE UPDATE LOGIC =====
-// For bullish trend: choose tightest valid support (highest of available levels)
-if trendDirection == "Up"
-    // Start with previous trend line as base, or FVG level if just flipped from neutral
-    float newTrendLine = na(trendLine[1]) ? lastFVGSupport : nz(trendLine[1])
+    // Store previous trend for change detection
+    string prevTrendDirection = trendDirection[1]
+
+    // --- 4. TREND ESTABLISHMENT (State Machine) ---
+    if bullishFVG and trendDirection != "Up"
+        trendDirection := "Up"
+        
+    if bearishFVG and trendDirection != "Down"
+        trendDirection := "Down"
+
+    // --- 5. HIERARCHICAL TREND LINE UPDATE LOGIC ---
+    // For bullish trend: choose tightest valid support (highest of available levels)
+    if trendDirection == "Up"
+        // Ensure initial value for newTrendLine is float
+        float newTrendLine = na(trendLine[1]) ? lastFVGSupport : nz(trendLine[1])
+        if not na(lastFVGSupport) and lastFVGSupport > newTrendLine
+            newTrendLine := lastFVGSupport
+        if not na(lastClusterSupport) and lastClusterSupport > newTrendLine
+            newTrendLine := lastClusterSupport
+        trendLine := newTrendLine
+
+    // For bearish trend: choose tightest valid resistance (lowest of available levels)        
+    if trendDirection == "Down"
+        // Ensure initial value for newTrendLine is float
+        float newTrendLine = na(trendLine[1]) ? lastFVGResistance : nz(trendLine[1])
+        if not na(lastFVGResistance) and lastFVGResistance < newTrendLine
+            newTrendLine := lastFVGResistance
+        if not na(lastClusterResistance) and lastClusterResistance < newTrendLine
+            newTrendLine := lastClusterResistance
+        trendLine := newTrendLine
+
+    // --- 6. TREND INVALIDATION LOGIC ---
+    if trendDirection == "Up" and close < trendLine
+        trendDirection := "Down"
+        trendLine := high  // Reset line
+        lastFVGSupport := na
+        lastClusterSupport := na
+
+    if trendDirection == "Down" and close > trendLine
+        trendDirection := "Up"  
+        trendLine := low   // Reset line
+        lastFVGResistance := na
+        lastClusterResistance := na
+
+    // --- 7. SMOOTHING ---
+    smoothedTrendLine = ta.ema(trendLine, smoothingLength)
     
-    // Update with FVG support if available and higher
-    if not na(lastFVGSupport) and lastFVGSupport > newTrendLine
-        newTrendLine := lastFVGSupport
-    
-    // Update with cluster support if available and higher
-    if not na(lastClusterSupport) and lastClusterSupport > newTrendLine
-        newTrendLine := lastClusterSupport
-    
-    trendLine := newTrendLine
+    // --- 8. RETURN VALUES ---
+    [smoothedTrendLine, trendDirection, prevTrendDirection]
 
-// For bearish trend: choose tightest valid resistance (lowest of available levels)        
-if trendDirection == "Down"
-    // Start with previous trend line as base, or FVG level if just flipped from neutral
-    float newTrendLine = na(trendLine[1]) ? lastFVGResistance : nz(trendLine[1])
-    
-    // Update with FVG resistance if available and lower
-    if not na(lastFVGResistance) and lastFVGResistance < newTrendLine
-        newTrendLine := lastFVGResistance
-    
-    // Update with cluster resistance if available and lower
-    if not na(lastClusterResistance) and lastClusterResistance < newTrendLine
-        newTrendLine := lastClusterResistance
-    
-    trendLine := newTrendLine
 
-// ===== TREND INVALIDATION LOGIC =====
-// Bullish trend invalidated when price closes below trend line
-if trendDirection == "Up" and close < trendLine
-    trendDirection := "Down"
-    trendLine := high  // Reset to current high
-    lastFVGSupport := na
-    lastClusterSupport := na
+// =============================================================================
+//                             EXECUTION
+// =============================================================================
 
-// Bearish trend invalidated when price closes above trend line    
-if trendDirection == "Down" and close > trendLine
-    trendDirection := "Up"  
-    trendLine := low   // Reset to current low
-    lastFVGResistance := na
-    lastClusterResistance := na
+// Run the function for Line A
+[smoothedTrendLineA, trendDirectionA, prevTrendDirectionA] = f_calculateATS(lookbackA, smoothingA)
 
-// ===== VISUALIZATION =====
-// Main ATS Trend Line
-lineColor = trendDirection == "Up" ? color.green : 
-           trendDirection == "Down" ? color.red : color.gray
+// Run the function for Line B
+[smoothedTrendLineB, trendDirectionB, prevTrendDirectionB] = f_calculateATS(lookbackB, smoothingB)
 
-plot(trendLine, "ATS Trend Line", lineColor, 2, plot.style_line)
 
-// Background color for trend direction
-bgcolor(showBackground ? (trendDirection == "Up" ? color.new(color.green, 95) : trendDirection == "Down" ? color.new(color.red, 95) : na) : na)
+// =============================================================================
+//                             VISUALIZATION
+// =============================================================================
 
-// Diagnostic plots (optional)
-plot(showDiagnostics ? fvgSupportLevel : na, "FVG Support", color.blue, style=plot.style_cross, linewidth=2)
-plot(showDiagnostics ? fvgResistanceLevel : na, "FVG Resistance", color.orange, style=plot.style_cross, linewidth=2)
-plot(showDiagnostics ? clusterSupportLevel : na, "Cluster Support", color.lime, style=plot.style_circles, linewidth=3)
-plot(showDiagnostics ? clusterResistanceLevel : na, "Cluster Resistance", color.fuchsia, style=plot.style_circles, linewidth=3)
+// --- Line A Plot (HTF Bias) ---
+plot(showLineA ? smoothedTrendLineA : na, "ATS Line A", colorA, 2, plot.style_line)
 
-// ===== ALERTS =====
+// --- Line B Plot (LTF Entry) ---
+plot(showLineB ? smoothedTrendLineB : na, "ATS Line B", colorB, 2, plot.style_line)
+
+// --- Background Color (Uses faster Line B bias) ---
+bgcolor(showBackground ? (trendDirectionB == "Up" ? color.new(color.green, 95) : trendDirectionB == "Down" ? color.new(color.red, 95) : na) : na)
+
+// --- Trend Change Dots for Line A (Major Bias Flip) ---
+plotshape(showLineA and showTrendChangeDotsA and trendDirectionA != prevTrendDirectionA ? smoothedTrendLineA : na, 
+          title="Line A Trend Flip", 
+          style=shape.cross, // CHANGED: Now plots a small cross
+          location=location.absolute,
+          color=trendDirectionA == "Up" ? color.green : color.red, // Full color for clarity
+          size=size.small) // CHANGED: Now uses small size for subtlety
+
+// --- Trend Change Dots for Line B (Entry Flip) ---
+plotshape(showLineB and showTrendChangeDotsB and trendDirectionB != prevTrendDirectionB ? smoothedTrendLineB : na, 
+          title="Line B Trend Flip", 
+          style=shape.circle, 
+          location=location.absolute,
+          color=trendDirectionB == "Up" ? color.green : color.red, // Full color for clear LTF signal
+          size=size.small)
+
+// =============================================================================
+//                             ALERTS
+// =============================================================================
+// Alerts are now based on Line B (the entry line)
+
 // Trend direction change alerts
-alertcondition(trendDirection != trendDirection[1], "Trend Direction Change", "Trend direction has changed to {{trendDirection}}")
+alertcondition(trendDirectionB != prevTrendDirectionB, "Line B Trend Change", "Line B direction changed to {{trendDirectionB}}")
 
-// Trend line break alerts  
-alertcondition(trendDirection == "Up" and close < trendLine, "Bullish Trend Break", "Price broke below bullish trend line")
-alertcondition(trendDirection == "Down" and close > trendLine, "Bearish Trend Break", "Price broke above bearish trend line")
+// Trend line break alerts (invalidation)
+alertcondition(trendDirectionB == "Up" and close < smoothedTrendLineB, "Line B Bullish Trend Break", "Price broke below Line B (Bullish Trend Invalidation)")
+alertcondition(trendDirectionB == "Down" and close > smoothedTrendLineB, "Line B Bearish Trend Break", "Price broke above Line B (Bearish Trend Invalidation)")
 
-// ===== DOCUMENTATION =====
-// This indicator combines proprietary ATS logic combining:
-// 1. 3-Candle Separation (Fair Value Gap) for objective trend establishment
-// 2. Group Separation (Cluster Pivots) for aggressive trailing during momentum
-//
-// The hierarchical logic always selects the tightest valid inefficiency boundary
-// to create a single dynamic trend line that acts as an ultimate trailing stop
+// Multi-Timeframe Confirmation Alert: Optional, very powerful signal!
+alertcondition(trendDirectionA == "Up" and trendDirectionB == "Up", "HTF/LTF BULLISH Alignment", "Both Line A and Line B are Bullish (Strong Long Signal)")
+alertcondition(trendDirectionA == "Down" and trendDirectionB == "Down", "HTF/LTF BEARISH Alignment", "Both Line A and Line B are Bearish (Strong Short Signal)")
+
+// =============================================================================
+//                             DOCUMENTATION
+// =============================================================================
+// This indicator provides two independent ATS Trend lines with separate configurations
+// for powerful Multi-Timeframe (MTF) analysis.
 //
 // USAGE:
-// - LONG: When price is above white line and trend direction is "Up"
-// - SHORT: When price is below white line and trend direction is "Down" 
-// - TREND FLIP: When price closes opposite the current trend line direction
+// 1. Line A (Slower): Set to a high-TF Lookback (e.g., 5 or 8) for overall BIAS.
+// 2. Line B (Faster): Set to a low-TF Lookback (e.g., 15 or 20) for ENTRY/EXIT timing.
 //
-// The indicator provides clear invalidation signals and aggressive trailing
-// during strong trending markets while maintaining objective FVG-based protection
+// - LONG SIGNAL: Line A is Green/Up AND Line B flips/stays Green/Up.
+// - SHORT SIGNAL: Line A is Red/Down AND Line B flips/stays Red/Down.
+// - INVALDATION: A close past the corresponding Line A or B.
+//
+// Default configurations are set for common HTF/LTF distinction.
+// Line B controls the Background color and Trend Flip Dots.
