@@ -103,7 +103,8 @@ f_calculateATS(lookbackWindow, smoothingLength) =>
         // SMOOTH TRANSITION: Gradually move line instead of jumping
         // This creates the smooth, flowing appearance like the reference image
         float transitionSpeed = 0.3  // 30% of the distance per bar
-        trendLine := trendLine[1] + (newTrendLine - trendLine[1]) * transitionSpeed
+        float prevLine = nz(trendLine[1], newTrendLine)  // FIX: Safe fallback for first bar
+        trendLine := prevLine + (newTrendLine - prevLine) * transitionSpeed
 
     // For bearish trend: choose tightest valid resistance (lowest of available levels)
     if trendDirection == "Down"
@@ -123,7 +124,8 @@ f_calculateATS(lookbackWindow, smoothingLength) =>
         // SMOOTH TRANSITION: Gradually move line instead of jumping
         // This creates the smooth, flowing appearance like the reference image
         float transitionSpeed = 0.3  // 30% of the distance per bar
-        trendLine := trendLine[1] + (newTrendLine - trendLine[1]) * transitionSpeed
+        float prevLine = nz(trendLine[1], newTrendLine)  // FIX: Safe fallback for first bar
+        trendLine := prevLine + (newTrendLine - prevLine) * transitionSpeed
 
     // --- 6. IMPROVED TREND INVALIDATION LOGIC ---
     // CRITICAL FIX: Require FVG confirmation + minimum bars to prevent whipsaws
