@@ -1,5 +1,5 @@
 //@version=5
-indicator("ATS Dual Trend Indicator V6 (Optimized)", "ATS Dual Trend V6", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("ATS Dual Trend Indicator V6", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // =============================================================================
 //                             USER CONFIGURATION
