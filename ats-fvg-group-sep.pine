@@ -111,33 +111,6 @@ plotColor = finalBias == 1 ? long_color : finalBias == -1 ? short_color : na
 // Plot the smoothed, stepping line
 plot(smoothedLevel, title="Smoothed ATS Trend Line", color=plotColor, linewidth=2, trackprice=true)
      
-// --- TREND CHANGE / FVG Confirmation DOTS (FIXED for visibility) ---
-// We increase the size to 'size.small' and offset the position slightly for visibility
-// relative to the main line plot.
-
-// Calculation for the small vertical offset
-f_offset_level(level, direction) => 
-    float offset = syminfo.mintick * 10 // A small offset based on tick size (adjust 10 as needed)
-    direction == 1 ? level + offset : level - offset
-
-// Bullish Confirmed FVG Dot (offset slightly above the level)
-plotshape(isConfirmedBullishFVG ? f_offset_level(confirmedBullishLevel, 1) : na,
-     style=shape.circle,
-     location=location.absolute,
-     offset=-group_size,
-     color=color.green,
-     size=size.tiny,
-     title="Bull FVG Signal")
-     
-// Bearish Confirmed FVG Dot (offset slightly below the level)
-plotshape(isConfirmedBearishFVG ? f_offset_level(confirmedBearishLevel, -1) : na,
-     style=shape.circle,
-     location=location.absolute,
-     offset=-group_size,
-     color=color.red,
-     size=size.tiny,
-     title="Bear FVG Signal")
-     
 // --- Display Bias Status in a Table ---
 
 var table infoTable = table.new(position.top_right, 1, 1, bgcolor=color.black, border_width=1)
