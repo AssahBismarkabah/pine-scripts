@@ -1,115 +1,85 @@
 //@version=5
-indicator("ATS-Style Inefficiency Tracker (Custom Rules)", overlay=true)
+indicator("ATS-Style Inefficiency Tracker (Smoothed Step)", overlay=true)
 
 // ====================================================================
 // 1. INPUTS & CONFIGURATION
 // ====================================================================
 
 // Group Size (Custom Rule 2: Filter)
-// The number of bars an FVG must survive to be confirmed as a strong signal.
 group_size = input.int(5, title="Survival Bars (Group Size)", minval=1)
 
+// Smoothing Period (New Input for Visuals)
+// Controls how quickly the line visually moves to the new level after a step is confirmed.
+smooth_period = input.int(3, title="Trend Line Smoothness", minval=1, tooltip="Higher value makes the line transition slower and smoother.")
+
 // Line Color Configuration
-long_color = color.new(#ffffff, 0)
-short_color = color.new(#494949, 0)
+long_color = color.new(#ffffff, 0) // White (assuming dark background)
+short_color = color.new(#494949, 0) // Dark Gray (assuming dark background)
 
 // ====================================================================
 // 2. STATE MANAGEMENT (The Core Logic)
 // ====================================================================
 
-// Bias: Stores the current directional bias (1=LONG, -1=SHORT, 0=NEUTRAL)
 var int directionalBias = 0
-
-// Line Level: The price level the horizontal line is currently holding.
 var float currentLineLevel = na
-
-// Start Bar: The bar index where the current trendline started.
 var int startBarIndex = na
-
-// Trendline Object: The line object that will be deleted/re-drawn.
-var line trendLine = na
 
 // ====================================================================
 // 3. FVG (3-CANDLE) DETECTION & LEVEL (History Operator Shifted)
 // ====================================================================
 
-// We check for the FVG pattern 'group_size' bars ago (C3 is bar[group_size]).
-// C1 is bar[group_size + 2], C3 is bar[group_size].
-
 fvg_offset = group_size
 
-// 3-Candle Separation Pattern Check
 isBullishFVG_past = low[fvg_offset] > high[fvg_offset + 2]
 isBearishFVG_past = high[fvg_offset] < low[fvg_offset + 2]
 
-// Determine the relevant support/resistance price level (C1's boundary)
-pastBullishLevel = isBullishFVG_past ? high[fvg_offset + 2] : na // Bottom of gap (Support)
-pastBearishLevel = isBearishFVG_past ? low[fvg_offset + 2] : na  // Top of gap (Resistance)
+pastBullishLevel = isBullishFVG_past ? high[fvg_offset + 2] : na 
+pastBearishLevel = isBearishFVG_past ? low[fvg_offset + 2] : na  
 
 // ====================================================================
 // 4. GROUP SEPARATION (FVG FILL) FILTER (Real-Time Fix)
 // ====================================================================
 
-// We check if the FVG created 'group_size' bars ago has been filled
-// by any bar since its formation (i.e., bars from [fvg_offset - 1] down to [0]).
-
 bullishFVG_survived = true
 bearishFVG_survived = true
 
-// Check all bars in the group (from the bar after formation up to the current bar)
 for i = 0 to fvg_offset - 1
-    // Check if any bar's low dipped into the BULLISH FVG (below the support level)
     if not na(pastBullishLevel) and low[i] < pastBullishLevel
         bullishFVG_survived := false
-        
-    // Check if any bar's high poked into the BEARISH FVG (above the resistance level)
     if not na(pastBearishLevel) and high[i] > pastBearishLevel
         bearishFVG_survived := false
 
-// Confirmed signal: FVG pattern happened and it survived the entire group_size lookback.
 isConfirmedBullishFVG = isBullishFVG_past and bullishFVG_survived
 isConfirmedBearishFVG = isBearishFVG_past and bearishFVG_survived
 
-// --- Use the CONFIRMED FVG Level (from 'group_size' bars ago) ---
 confirmedBullishLevel = isConfirmedBullishFVG ? pastBullishLevel : na
 confirmedBearishLevel = isConfirmedBearishFVG ? pastBearishLevel : na
 
 // ====================================================================
-// 5. TREND STATE MACHINE (Custom Rules 3 & 4: Hold, Step, Flip)
+// 5. TREND STATE MACHINE (Hold, Step, Flip)
 // ====================================================================
 
 // --- FLIP LOGIC (Custom Rule 4) ---
-// If the trend is active, check for the break.
-
 if directionalBias == 1 // LONG BIAS
-    // Long trend is broken if price closes below the current support level
     if close < currentLineLevel
         directionalBias := 0 // Flip to NEUTRAL
-        currentLineLevel := na // Reset level
-        startBarIndex := na
-        line.delete(trendLine) // Clear old line
-        trendLine := na
+        currentLineLevel := na 
         
 else if directionalBias == -1 // SHORT BIAS
-    // Short trend is broken if price closes above the current resistance level
     if close > currentLineLevel
         directionalBias := 0 // Flip to NEUTRAL
-        currentLineLevel := na // Reset level
-        startBarIndex := na
-        line.delete(trendLine) // Clear old line
-        trendLine := na
+        currentLineLevel := na 
 
 // --- STEP/ENTRY LOGIC (Custom Rule 3) ---
-// Check for a new, valid entry or a step up/down.
 
 // 1. New Long Entry/Step Up
 if isConfirmedBullishFVG
     if directionalBias == 0 // Entering New Long Trend
         directionalBias := 1
         currentLineLevel := confirmedBullishLevel
-        startBarIndex := bar_index - group_size // Start line where the FVG was confirmed
-    else if directionalBias == 1 // Stepping Up (New higher support found)
-        if confirmedBullishLevel > currentLineLevel // Only step if the new level is MORE favorable (higher)
+        startBarIndex := bar_index - group_size 
+    else if directionalBias == 1 // Stepping Up
+        if confirmedBullishLevel > currentLineLevel 
             currentLineLevel := confirmedBullishLevel
             startBarIndex := bar_index - group_size
             
@@ -118,37 +88,47 @@ if isConfirmedBearishFVG
     if directionalBias == 0 // Entering New Short Trend
         directionalBias := -1
         currentLineLevel := confirmedBearishLevel
-        startBarIndex := bar_index - group_size // Start line where the FVG was confirmed
-    else if directionalBias == -1 // Stepping Down (New lower resistance found)
-        if confirmedBearishLevel < currentLineLevel // Only step if the new level is MORE favorable (lower)
+        startBarIndex := bar_index - group_size 
+    else if directionalBias == -1 // Stepping Down
+        if confirmedBearishLevel < currentLineLevel
             currentLineLevel := confirmedBearishLevel
             startBarIndex := bar_index - group_size
 
 // ====================================================================
-// 6. VISUALIZATION & LINE PLOTTING
+// 6. VISUALIZATION & SMOOTH PLOTTING (The Fix)
 // ====================================================================
 
-// Plot the trend line as a continuous stepping line (like in the example)
-lineColor = directionalBias == 1 ? long_color : directionalBias == -1 ? short_color : color.gray
+// Use ta.valuewhen to ensure the current line level holds its value until 
+// a new confirmation is made, even if the confirmation signal is temporary.
+finalLevel = ta.valuewhen(not na(currentLineLevel), currentLineLevel, 0)
+finalBias = ta.valuewhen(directionalBias != 0, directionalBias, 0)
 
-// Always plot the level (not na) to keep line continuous, use stepline style for the staircase effect
-plot(currentLineLevel, "ATS Trend Line", color=lineColor, linewidth=2, style=plot.style_stepline)
+// Apply smoothing to the final level to create the gradual step transition
+// Use WMA for a visually smooth curve, which better matches the proprietary feel.
+smoothedLevel = ta.wma(finalLevel, smooth_period)
 
-// Detect trend changes (when bias changes or level steps)
-var int prevBias = 0
-var float prevLevel = na
-trendChange = (directionalBias != prevBias and directionalBias != 0) or (directionalBias != 0 and currentLineLevel != prevLevel and not na(prevLevel))
-prevBias := directionalBias
-prevLevel := currentLineLevel
+// Determine plot color
+plotColor = finalBias == 1 ? long_color : finalBias == -1 ? short_color : na
 
-// Plot dots at trend changes
-plotshape(trendChange and directionalBias != 0 ? currentLineLevel : na, "Trend Change", style=shape.circle, location=location.absolute, color=lineColor, size=size.small)
+// Plot the smoothed, stepping line
+plot(smoothedLevel, title="Smoothed ATS Trend Line", color=plotColor, linewidth=2, trackprice=true)
+     
+// --- Debugging/Visualization of FVG Signals ---
+
+// Plot a small dot where the FVG was *originally formed*
+plotshape(isConfirmedBullishFVG or isConfirmedBearishFVG, 
+     style=shape.circle, 
+     location=location.bottom, 
+     offset=group_size, 
+     color=isConfirmedBullishFVG ? color.green : color.red, 
+     size=size.tiny, 
+     title="Confirmed FVG Signal")
      
 // --- Display Bias Status in a Table ---
 
-var table infoTable = table.new(position.top_right, 1, 1, bgcolor=color.white, border_width=1)
+var table infoTable = table.new(position.top_right, 1, 1, bgcolor=color.black, border_width=1)
 if barstate.islast
-    color displayColor = directionalBias == 1 ? long_color : directionalBias == -1 ? short_color : color.gray
-    string statusText = directionalBias == 1 ? "LONG DB" : directionalBias == -1 ? "SHORT DB" : "NEUTRAL"
+    color displayColor = finalBias == 1 ? color.new(color.lime, 0) : finalBias == -1 ? color.new(color.red, 0) : color.gray
+    string statusText = finalBias == 1 ? "LONG DB" : finalBias == -1 ? "SHORT DB" : "NEUTRAL"
     
     table.cell(infoTable, 0, 0, "ATS Bias: " + statusText, text_color=color.white, bgcolor=displayColor)
