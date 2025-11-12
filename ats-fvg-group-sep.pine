@@ -30,9 +30,11 @@ var int startBarIndex = na
 
 fvg_offset = group_size
 
-isBullishFVG_past = low[fvg_offset] > high[fvg_offset + 2]
-isBearishFVG_past = high[fvg_offset] < low[fvg_offset + 2]
+// Standard 3-Bar FVG Detection logic, shifted back by 'group_size' bars
+isBullishFVG_past = high[fvg_offset + 2] < low[fvg_offset] 
+isBearishFVG_past = low[fvg_offset + 2] > high[fvg_offset] 
 
+// The level for the FVG is the boundary that must be protected
 pastBullishLevel = isBullishFVG_past ? high[fvg_offset + 2] : na 
 pastBearishLevel = isBearishFVG_past ? low[fvg_offset + 2] : na  
 
@@ -43,9 +45,12 @@ pastBearishLevel = isBearishFVG_past ? low[fvg_offset + 2] : na
 bullishFVG_survived = true
 bearishFVG_survived = true
 
+// Check if the FVG has been mitigated in the subsequent 'group_size' bars (0 to fvg_offset - 1)
 for i = 0 to fvg_offset - 1
+    // If price breaks below the bullish FVG level, it is mitigated
     if not na(pastBullishLevel) and low[i] < pastBullishLevel
         bullishFVG_survived := false
+    // If price breaks above the bearish FVG level, it is mitigated
     if not na(pastBearishLevel) and high[i] > pastBearishLevel
         bearishFVG_survived := false
 
@@ -59,7 +64,8 @@ confirmedBearishLevel = isConfirmedBearishFVG ? pastBearishLevel : na
 // 5. TREND STATE MACHINE (Hold, Step, Flip)
 // ====================================================================
 
-// --- FLIP LOGIC (Custom Rule 4) ---
+// --- FLIP LOGIC (Custom Rule 4: Trailing Stop Break) ---
+// If price closes past the current stop level, reset to Neutral
 if directionalBias == 1 // LONG BIAS
     if close < currentLineLevel
         directionalBias := 0 // Flip to NEUTRAL
@@ -70,41 +76,33 @@ else if directionalBias == -1 // SHORT BIAS
         directionalBias := 0 // Flip to NEUTRAL
         currentLineLevel := na 
 
-// --- STEP/ENTRY LOGIC (Custom Rule 3) ---
+// --- STEP/ENTRY LOGIC (Custom Rule 3: FVG Confirmation) ---
 
 // 1. New Long Entry/Step Up
 if isConfirmedBullishFVG
-    if directionalBias == 0 // Entering New Long Trend
-        directionalBias := 1
-        currentLineLevel := confirmedBullishLevel
-        startBarIndex := bar_index - group_size 
-    else if directionalBias == 1 // Stepping Up
-        if confirmedBullishLevel > currentLineLevel 
+    if directionalBias != -1 // Cannot enter long if currently short
+        if directionalBias == 0 or confirmedBullishLevel > currentLineLevel // Entering New Long Trend or Stepping Up
+            directionalBias := 1
             currentLineLevel := confirmedBullishLevel
-            startBarIndex := bar_index - group_size
+            startBarIndex := bar_index - group_size // Mark the bar where the FVG was confirmed
             
 // 2. New Short Entry/Step Down
 if isConfirmedBearishFVG
-    if directionalBias == 0 // Entering New Short Trend
-        directionalBias := -1
-        currentLineLevel := confirmedBearishLevel
-        startBarIndex := bar_index - group_size 
-    else if directionalBias == -1 // Stepping Down
-        if confirmedBearishLevel < currentLineLevel
+    if directionalBias != 1 // Cannot enter short if currently long
+        if directionalBias == 0 or confirmedBearishLevel < currentLineLevel // Entering New Short Trend or Stepping Down
+            directionalBias := -1
             currentLineLevel := confirmedBearishLevel
-            startBarIndex := bar_index - group_size
+            startBarIndex := bar_index - group_size // Mark the bar where the FVG was confirmed
 
 // ====================================================================
 // 6. VISUALIZATION & SMOOTH PLOTTING (The Fix)
 // ====================================================================
 
-// Use ta.valuewhen to ensure the current line level holds its value until 
-// a new confirmation is made, even if the confirmation signal is temporary.
+// Hold the confirmed level and bias state
 finalLevel = ta.valuewhen(not na(currentLineLevel), currentLineLevel, 0)
 finalBias = ta.valuewhen(directionalBias != 0, directionalBias, 0)
 
-// Apply smoothing to the final level to create the gradual step transition
-// Use WMA for a visually smooth curve, which better matches the proprietary feel.
+// Apply smoothing (WMA) for the gradual step transition
 smoothedLevel = ta.wma(finalLevel, smooth_period)
 
 // Determine plot color
@@ -113,16 +111,34 @@ plotColor = finalBias == 1 ? long_color : finalBias == -1 ? short_color : na
 // Plot the smoothed, stepping line
 plot(smoothedLevel, title="Smoothed ATS Trend Line", color=plotColor, linewidth=2, trackprice=true)
      
-// --- Debugging/Visualization of FVG Signals ---
+// --- TREND CHANGE / FVG Confirmation DOTS (FIXED for visibility) ---
+// We increase the size to 'size.small' and offset the position slightly for visibility
+// relative to the main line plot.
 
-// Plot a small dot where the FVG was *originally formed*
-plotshape(isConfirmedBullishFVG or isConfirmedBearishFVG, 
+// Calculation for the small vertical offset
+f_offset_level(level, direction) => 
+    float offset = syminfo.mintick * 10 // A small offset based on tick size (adjust 10 as needed)
+    direction == 1 ? level + offset : level - offset
+
+// Bullish Confirmed FVG Dot (offset slightly above the level)
+plotshape(isConfirmedBullishFVG, 
      style=shape.circle, 
-     location=location.bottom, 
+     location=location.absolute, 
+     series=f_offset_level(confirmedBullishLevel, 1), // Offset UP
      offset=group_size, 
-     color=isConfirmedBullishFVG ? color.green : color.red, 
-     size=size.tiny, 
-     title="Confirmed FVG Signal")
+     color=color.green, 
+     size=size.small, // Increased for visibility
+     title="Bull FVG Signal")
+     
+// Bearish Confirmed FVG Dot (offset slightly below the level)
+plotshape(isConfirmedBearishFVG, 
+     style=shape.circle, 
+     location=location.absolute, 
+     series=f_offset_level(confirmedBearishLevel, -1), // Offset DOWN
+     offset=group_size, 
+     color=color.red, 
+     size=size.small, // Increased for visibility
+     title="Bear FVG Signal")
      
 // --- Display Bias Status in a Table ---
 
