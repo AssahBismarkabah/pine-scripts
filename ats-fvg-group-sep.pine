@@ -5,12 +5,43 @@ indicator("ATS-Style Inefficiency Tracker (Smoothed Step)", overlay=true)
 // 1. INPUTS & CONFIGURATION
 // ====================================================================
 
-// Group Size (Custom Rule 2: Filter)
-group_size = input.int(5, title="Survival Bars (Group Size)", minval=1)
+// --- Timeframe Presets ---
+preset = input.string("Manual", title="Timeframe Optimization Preset", 
+     options=["Manual", "1W (Swing)", "1D (Swing)", "4H (Intraday)", "30M (Tactical)", "15M (Scalp)"],
+     tooltip="Automatically sets optimal 'Survival Bars' (filter) and 'Smoothness' (lag) based on your selected timeframe.")
 
-// Smoothing Period (New Input for Visuals)
-// Controls how quickly the line visually moves to the new level after a step is confirmed.
-smooth_period = input.int(3, title="Trend Line Smoothness", minval=1, tooltip="Higher value makes the line transition slower and smoother.")
+// --- Manual Configuration Inputs ---
+// These are only used if Preset is set to "Manual"
+manual_group_size = input.int(5, title="Survival Bars (Manual Filter)", minval=1)
+manual_smooth_period = input.int(3, title="Trend Line Smoothness (Manual)", minval=1)
+
+// --- Optimal Preset Logic ---
+var int preset_group_size = 0
+var int preset_smooth_period = 0
+
+if preset == "1W (Swing)"
+    preset_group_size := 3
+    preset_smooth_period := 5
+else if preset == "1D (Swing)"
+    preset_group_size := 5
+    preset_smooth_period := 3
+else if preset == "4H (Intraday)"
+    preset_group_size := 8
+    preset_smooth_period := 3
+else if preset == "30M (Tactical)"
+    preset_group_size := 12
+    preset_smooth_period := 5
+else if preset == "15M (Scalp)"
+    preset_group_size := 15
+    preset_smooth_period := 8
+else
+    // "Manual" or any other value defaults to the manual inputs
+    preset_group_size := manual_group_size
+    preset_smooth_period := manual_smooth_period
+
+// Final values to be used in the logic
+group_size = preset_group_size
+smooth_period = preset_smooth_period
 
 // Line Color Configuration
 long_color = color.new(#ffffff, 0) // White (assuming dark background)
