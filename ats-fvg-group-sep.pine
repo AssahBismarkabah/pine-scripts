@@ -11,7 +11,7 @@ group_size = input.int(5, title="Survival Bars (Group Size)", minval=1)
 
 // Line Color Configuration
 long_color = color.new(#ffffff, 0)
-short_color = color.new(#4d2929, 0)
+short_color = color.new(#494949, 0)
 
 // ====================================================================
 // 2. STATE MANAGEMENT (The Core Logic)
