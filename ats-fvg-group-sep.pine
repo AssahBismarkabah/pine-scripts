@@ -128,20 +128,21 @@ if isConfirmedBearishFVG
 // 6. VISUALIZATION & LINE PLOTTING
 // ====================================================================
 
-// Re-draw the trendline every bar if the bias is active
-if directionalBias != 0 and not na(currentLineLevel) and not na(startBarIndex)
-    
-    // Delete the previous line instance
-    if not na(trendLine)
-        line.delete(trendLine)
-        
-    // Draw the new line as a horizontal ray starting from the start bar
-    trendLine := line.new(startBarIndex, currentLineLevel, bar_index, currentLineLevel, color=directionalBias == 1 ? long_color : short_color, width=2, extend=extend.right)
-         
-// --- Debugging/Visualization of FVG Signals ---
+// Plot the trend line as a continuous stepping line (like in the example)
+lineColor = directionalBias == 1 ? long_color : directionalBias == -1 ? short_color : color.gray
 
-// Plot a small dot where the FVG was *originally formed*
-plotshape(isConfirmedBullishFVG or isConfirmedBearishFVG, style=shape.circle, location=location.bottom, offset=-group_size, color=isConfirmedBullishFVG ? color.green : color.red, size=size.tiny, title="Confirmed FVG Signal")
+// Always plot the level (not na) to keep line continuous, use stepline style for the staircase effect
+plot(currentLineLevel, "ATS Trend Line", color=lineColor, linewidth=2, style=plot.style_stepline)
+
+// Detect trend changes (when bias changes or level steps)
+var int prevBias = 0
+var float prevLevel = na
+trendChange = (directionalBias != prevBias and directionalBias != 0) or (directionalBias != 0 and currentLineLevel != prevLevel and not na(prevLevel))
+prevBias := directionalBias
+prevLevel := currentLineLevel
+
+// Plot dots at trend changes
+plotshape(trendChange and directionalBias != 0 ? currentLineLevel : na, "Trend Change", style=shape.circle, location=location.absolute, color=lineColor, size=size.small)
      
 // --- Display Bias Status in a Table ---
 
