@@ -1,0 +1,472 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © BOSWaves
+
+//@version=6
+indicator("ADX Tide Zones", overlay=true, max_boxes_count=500, max_labels_count=100)
+
+// ═══════════════════════════════════════════════════════════════════════
+// INPUTS
+// ═══════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────
+// Core Parameters
+// ─────────────────────────────────────────────────────────────────────────
+src             = input.source(hlc3, "Price Source", group="Core Settings")
+adxLen          = input.int(21, "ADX Length", minval=8, maxval=50, group="Core Settings")
+emaLen          = input.int(15, "Center EMA", minval=5, maxval=50, group="Core Settings")
+spreadLen       = input.int(150, "Zone Spread Length", minval=50, maxval=300, group="Core Settings")
+kMult           = input.float(2.5, "Zone Multiplier", minval=1.0, maxval=5.0, step=0.1, group="Core Settings")
+adxThreshold    = input.int(25, "ADX Strength Filter", minval=15, maxval=40, group="Core Settings")
+smoothingFactor = input.int(5, "Smoothing Factor", minval=1, maxval=10, group="Core Settings")
+
+// ─────────────────────────────────────────────────────────────────────────
+// Advanced Features
+// ─────────────────────────────────────────────────────────────────────────
+useVortex         = input.bool(true, "Enable Vortex Indicator", group="Advanced Features")
+useVolatilityAdapt = input.bool(true, "Volatility Adaptation", group="Advanced Features")
+useMultiTimeframe = input.bool(false, "Multi-Timeframe Confluence", group="Advanced Features")
+useMomentumFlow   = input.bool(true, "Momentum Flow Analysis", group="Advanced Features")
+useVolumeProfile  = input.bool(true, "Volume-Weighted Zones", group="Advanced Features")
+higherTf          = input.timeframe("60", "Higher Timeframe", group="Advanced Features")
+vortexPeriod      = input.int(14, "Vortex Period", minval=10, maxval=30, group="Advanced Features")
+
+// ─────────────────────────────────────────────────────────────────────────
+// Visual Configuration
+// ─────────────────────────────────────────────────────────────────────────
+showMainZones     = input.bool(true, "Show Main Zones", group="Visual Settings")
+showInnerZones    = input.bool(false, "Show Inner Zones", group="Visual Settings")
+showSignals       = input.bool(true, "Show Entry Signals", group="Visual Settings")
+showPullbacks     = input.bool(true, "Show Pullback Opportunities", group="Visual Settings")
+showInfoPanel     = input.bool(true, "Show Information Panel", group="Visual Settings")
+showBackground    = input.bool(true, "Show Background Fill", group="Visual Settings")
+backgroundOpacity = input.int(90, "Background Opacity", minval=80, maxval=95, group="Visual Settings")
+showCandleColors  = input.bool(true, "Color Candles by Trend", group="Visual Settings")
+
+// ─────────────────────────────────────────────────────────────────────────
+// Color Configuration
+// ─────────────────────────────────────────────────────────────────────────
+bullPrimary   = input.color(#00E5FF, "Bull Primary", group="Color Settings")
+bearPrimary   = input.color(#FF1744, "Bear Primary", group="Color Settings")
+neutralColor  = input.color(#9E9E9E, "Neutral", group="Color Settings")
+zoneOpacity   = input.int(92, "Zone Opacity", minval=80, maxval=98, group="Color Settings")
+
+// ═══════════════════════════════════════════════════════════════════════
+// CALCULATIONS                                
+// ═══════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────
+// ADX with Smoothing
+// ─────────────────────────────────────────────────────────────────────────
+[diPlusRaw, diMinusRaw, adxRaw] = ta.dmi(adxLen, adxLen)
+diPlus   = ta.ema(diPlusRaw, smoothingFactor)
+diMinus  = ta.ema(diMinusRaw, smoothingFactor)
+adxValue = ta.ema(adxRaw, smoothingFactor)
+
+// ─────────────────────────────────────────────────────────────────────────
+// Vortex Indicator
+// ─────────────────────────────────────────────────────────────────────────
+viPlus       = useVortex ? math.sum(math.abs(high - low[1]), vortexPeriod) : 0.0
+viMinus      = useVortex ? math.sum(math.abs(low - high[1]), vortexPeriod) : 0.0
+viTrueRange  = useVortex ? math.sum(ta.tr, vortexPeriod) : 1.0
+vortexPlus   = useVortex and viTrueRange > 0 ? viPlus / viTrueRange : 0.0
+vortexMinus  = useVortex and viTrueRange > 0 ? viMinus / viTrueRange : 0.0
+vortexDiff   = vortexPlus - vortexMinus
+
+// ─────────────────────────────────────────────────────────────────────────
+// Volatility Metrics
+// ─────────────────────────────────────────────────────────────────────────
+atrValue        = ta.atr(14)
+atrMa           = ta.sma(atrValue, 50)
+volatilityRatio = useVolatilityAdapt and atrMa > 0 ? atrValue / atrMa : 1.0
+bbStdDev        = ta.stdev(close, 20)
+
+// ─────────────────────────────────────────────────────────────────────────
+// Volume Analysis
+// ─────────────────────────────────────────────────────────────────────────
+volumeMa       = ta.sma(volume, 20)
+volumeRatio    = volumeMa > 0 ? volume / volumeMa : 1.0
+relativeVolume = ta.sma(volumeRatio, 5)
+volumeWeight   = useVolumeProfile ? math.min(2.0, math.max(0.5, relativeVolume)) : 1.0
+
+// ═══════════════════════════════════════════════════════════════════════
+// ZONE CALCULATION                              
+// ═══════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────
+// Multi-layer EMA System
+// ─────────────────────────────────────────────────────────────────────────
+ema1     = ta.ema(src, emaLen)
+emaFast  = ta.ema(ema1, math.round(emaLen * 0.7))
+emaSlow  = ta.ema(ema1, math.round(emaLen * 1.3))
+
+// ─────────────────────────────────────────────────────────────────────────
+// Adaptive Center Line
+// ─────────────────────────────────────────────────────────────────────────
+adxStrong      = adxValue >= adxThreshold
+centerLine     = adxStrong ? emaFast : emaSlow
+centerSmoothed = ta.ema(centerLine, smoothingFactor)
+
+// ─────────────────────────────────────────────────────────────────────────
+// Dynamic Spread Calculation
+// ─────────────────────────────────────────────────────────────────────────
+baseSpread           = ta.sma(high - low, spreadLen)
+adxMultiplier        = adxStrong ? (1 + adxValue/200) : (0.7 + adxValue/300)
+vortexMultiplier     = useVortex ? (1 + math.abs(vortexDiff) * 0.5) : 1.0
+volatilityMultiplier = math.min(2.0, math.max(0.5, volatilityRatio))
+finalSpread          = baseSpread * adxMultiplier * vortexMultiplier * volatilityMultiplier * volumeWeight
+
+// ─────────────────────────────────────────────────────────────────────────
+// Zone Bands
+// ─────────────────────────────────────────────────────────────────────────
+// Primary Zones
+upperBand = centerSmoothed + kMult * finalSpread
+lowerBand = centerSmoothed - kMult * finalSpread
+
+// Inner Zones (0.618)
+upperInner = centerSmoothed + kMult * finalSpread * 0.618
+lowerInner = centerSmoothed - kMult * finalSpread * 0.618
+
+// ═══════════════════════════════════════════════════════════════════════
+// CRAWLING ZONE SYSTEM                             
+// ═══════════════════════════════════════════════════════════════════════
+
+var float crawlUp      = na
+var float crawlDown    = na
+var float crawlUpInner = na
+var float crawlDownInner = na
+
+// Initialize crawling zones
+if na(crawlUp[1])
+    crawlUp       := upperBand
+    crawlDown     := lowerBand
+    crawlUpInner  := upperInner
+    crawlDownInner := lowerInner
+else
+    // Crawling logic with memory
+    crawlUp       := src[1] > crawlUp[1] ? upperBand : math.min(upperBand, crawlUp[1])
+    crawlDown     := src[1] < crawlDown[1] ? lowerBand : math.max(lowerBand, crawlDown[1])
+    crawlUpInner  := src[1] > crawlUpInner[1] ? upperInner : math.min(upperInner, crawlUpInner[1])
+    crawlDownInner := src[1] < crawlDownInner[1] ? lowerInner : math.max(lowerInner, crawlDownInner[1])
+
+// ═══════════════════════════════════════════════════════════════════════
+// TREND ANALYSIS SYSTEM                            
+// ═══════════════════════════════════════════════════════════════════════
+
+var int   trendDirection = 0
+var int   trendStrength  = 0
+var float trendMemory    = 0.0
+var int   barsInTrend    = 0
+
+// ─────────────────────────────────────────────────────────────────────────
+// Multi-factor Trend Determination
+// ─────────────────────────────────────────────────────────────────────────
+bullishFactors = 0
+bearishFactors = 0
+
+// Factor 1: DI Analysis
+if diPlus > diMinus
+    bullishFactors += 1
+else
+    bearishFactors += 1
+
+// Factor 2: ADX Strength
+if adxStrong and diPlus > diMinus
+    bullishFactors += 2
+else if adxStrong and diMinus > diPlus
+    bearishFactors += 2
+
+// Factor 3: Vortex
+if useVortex
+    if vortexDiff > 0.1
+        bullishFactors += 1
+    else if vortexDiff < -0.1
+        bearishFactors += 1
+
+// Factor 4: Price Position
+if src > centerSmoothed
+    bullishFactors += 1
+else
+    bearishFactors += 1
+
+// Factor 5: Momentum
+mom = ta.mom(src, 10)
+if mom > 0
+    bullishFactors += 1
+else
+    bearishFactors += 1
+
+// ─────────────────────────────────────────────────────────────────────────
+// Trend Memory Accumulation
+// ─────────────────────────────────────────────────────────────────────────
+trendMemory := trendMemory * 0.9 + (bullishFactors - bearishFactors) * 0.1
+
+// Determine trend direction and strength
+prevTrend = trendDirection
+if math.abs(trendMemory) < 0.5
+    trendDirection := 0  // Neutral
+    trendStrength  := 0
+else if trendMemory > 0
+    trendDirection := 1  // Bullish
+    trendStrength  := math.min(3, math.round(trendMemory))
+else
+    trendDirection := -1  // Bearish
+    trendStrength  := math.min(3, math.round(math.abs(trendMemory)))
+
+// Track bars in trend
+if trendDirection == prevTrend
+    barsInTrend += 1
+else
+    barsInTrend := 0
+
+// ═══════════════════════════════════════════════════════════════════════
+// BACKGROUND FILL LOGIC                            
+// ═══════════════════════════════════════════════════════════════════════
+
+// Background color based on trend direction
+backgroundBullColor = color.new(bullPrimary, backgroundOpacity)
+backgroundBearColor = color.new(bearPrimary, backgroundOpacity) 
+backgroundNeutralColor = color.new(neutralColor, backgroundOpacity + 2)
+
+// Apply background fill
+bgcolor(showBackground and trendDirection == 1 ? backgroundBullColor : showBackground and trendDirection == -1 ? backgroundBearColor : showBackground and trendDirection == 0 ? backgroundNeutralColor : na, title="Trend Background")
+
+// ═══════════════════════════════════════════════════════════════════════
+// MOMENTUM FLOW ANALYSIS                            
+// ═══════════════════════════════════════════════════════════════════════
+
+rsi = ta.rsi(src, 14)
+[macdLine, signalLine, histLine] = ta.macd(src, 12, 26, 9)
+stochK = ta.stoch(close, high, low, 14)
+cci = ta.cci(src, 20)
+
+momentumScore = 0.0
+if useMomentumFlow
+    momentumScore += (rsi - 50) / 50
+    momentumScore += histLine > 0 ? 0.5 : -0.5
+    momentumScore += (stochK - 50) / 100
+    momentumScore += cci > 0 ? 0.25 : -0.25
+    momentumScore := momentumScore / 4
+
+// ═══════════════════════════════════════════════════════════════════════
+// MULTI-TIMEFRAME CONFLUENCE                          
+// ═══════════════════════════════════════════════════════════════════════
+
+htfTrend = 0
+htfAdx   = adxValue
+if useMultiTimeframe
+    htfAdx    := request.security(syminfo.tickerid, higherTf, adxValue, lookahead=barmerge.lookahead_off)
+    htfEma50  = request.security(syminfo.tickerid, higherTf, ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+    htfEma200 = request.security(syminfo.tickerid, higherTf, ta.ema(close, 200), lookahead=barmerge.lookahead_off)
+    htfTrend  := htfEma50 > htfEma200 ? 1 : -1
+
+// ═══════════════════════════════════════════════════════════════════════
+// ZONE VISUALIZATION                             
+// ═══════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────
+// Determine Colors Based on Trend
+// ─────────────────────────────────────────────────────────────────────────
+currentZoneColor = trendDirection == 1 ? color.new(bullPrimary, zoneOpacity) : 
+                   trendDirection == -1 ? color.new(bearPrimary, zoneOpacity) : 
+                   color.new(neutralColor, zoneOpacity + 3)
+
+// ─────────────────────────────────────────────────────────────────────────
+// Main Zones
+// ─────────────────────────────────────────────────────────────────────────
+p1 = plot(showMainZones ? crawlUp : na, "Upper Zone", 
+          color=color.new(bullPrimary, 85), linewidth=1)
+p2 = plot(showMainZones ? crawlDown : na, "Lower Zone", 
+          color=color.new(bearPrimary, 85), linewidth=1)
+fill(p1, p2, color=showMainZones ? currentZoneColor : na, title="Main Zone Fill")
+
+// ─────────────────────────────────────────────────────────────────────────
+// Inner Zones
+// ─────────────────────────────────────────────────────────────────────────
+p3 = plot(showInnerZones ? crawlUpInner : na, "Upper Inner", 
+          color=color.new(bullPrimary, 90), linewidth=1, style=plot.style_linebr)
+p4 = plot(showInnerZones ? crawlDownInner : na, "Lower Inner", 
+          color=color.new(bearPrimary, 90), linewidth=1, style=plot.style_linebr)
+fill(p3, p4, color=showInnerZones ? color.new(currentZoneColor, 95) : na, title="Inner Zone Fill")
+
+// ─────────────────────────────────────────────────────────────────────────
+// Center Line
+// ─────────────────────────────────────────────────────────────────────────
+centerColor = trendDirection == 1 ? bullPrimary : 
+              trendDirection == -1 ? bearPrimary : neutralColor
+plot(centerSmoothed, "Center", color=color.new(centerColor, 30), linewidth=2)
+
+// ─────────────────────────────────────────────────────────────────────────
+// Jagged Guide Line
+// ─────────────────────────────────────────────────────────────────────────
+guideLineJagged = trendDirection == 1 ? crawlUp : trendDirection == -1 ? crawlDown : centerSmoothed
+plot(guideLineJagged, "Guide Jagged", 
+     color=trendDirection == 1 ? bullPrimary : trendDirection == -1 ? bearPrimary : neutralColor,
+     linewidth=3, style=plot.style_linebr)
+
+// ═══════════════════════════════════════════════════════════════════════
+// SIGNAL DETECTION                               
+// ═══════════════════════════════════════════════════════════════════════
+
+// Major trend changes
+trendChangeBull = trendDirection == 1 and trendDirection[1] <= 0 and trendStrength >= 1 and adxStrong
+trendChangeBear = trendDirection == -1 and trendDirection[1] >= 0 and trendStrength >= 1 and adxStrong
+
+// Pullback opportunities
+pullbackBull = trendDirection == 1 and low <= crawlDownInner and close > crawlDownInner and volumeRatio > 1.2
+pullbackBear = trendDirection == -1 and high >= crawlUpInner and close < crawlUpInner and volumeRatio > 1.2
+
+// ═══════════════════════════════════════════════════════════════════════
+// SIGNAL VISUALIZATION                             
+// ═══════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────
+// Major Signals
+// ─────────────────────────────────────────────────────────────────────────
+atrDistance = ta.atr(14) * 2
+
+if showSignals
+    // Bullish Signal
+    if trendDirection == 1 and trendDirection[1] <= 0
+        label.new(bar_index, low - atrDistance, "▲", 
+                 style=label.style_label_up, 
+                 color=color.new(bullPrimary, 80), 
+                 textcolor=color.white, 
+                 size=size.large)
+    
+    // Bearish Signal
+    if trendDirection == -1 and trendDirection[1] >= 0
+        label.new(bar_index, high + atrDistance, "▼", 
+                 style=label.style_label_down, 
+                 color=color.new(bearPrimary, 80), 
+                 textcolor=color.white, 
+                 size=size.large)
+
+// ─────────────────────────────────────────────────────────────────────────
+// Pullback Signals
+// ─────────────────────────────────────────────────────────────────────────
+plotshape(showPullbacks and pullbackBull ? low : na, 
+         style=shape.circle, 
+         location=location.belowbar, 
+         color=color.new(bullPrimary, 30), 
+         size=size.small, 
+         title="Bull Pullback")
+
+plotshape(showPullbacks and pullbackBear ? high : na, 
+         style=shape.circle, 
+         location=location.abovebar, 
+         color=color.new(bearPrimary, 30), 
+         size=size.small, 
+         title="Bear Pullback")
+
+// ═══════════════════════════════════════════════════════════════════════
+//                        INFORMATION PANEL                               
+// ═══════════════════════════════════════════════════════════════════════
+
+if showInfoPanel and barstate.islast
+    var table infoTable = table.new(position.top_right, 2, 8, 
+                                   bgcolor=color.new(#1A1A1A, 60), 
+                                   border_width=1, 
+                                   frame_width=2, 
+                                   frame_color=color.new(centerColor, 50))
+    
+    // ─────────────────────────────────────────────────────────────────────
+    // Header
+    // ─────────────────────────────────────────────────────────────────────
+    table.merge_cells(infoTable, 0, 0, 1, 0)
+    table.cell(infoTable, 0, 0, "TIDE FLOW", 
+              text_color=color.white, 
+              text_size=size.small, 
+              bgcolor=color.new(centerColor, 80))
+    
+    // ─────────────────────────────────────────────────────────────────────
+    // Trend Status
+    // ─────────────────────────────────────────────────────────────────────
+    trendText = trendDirection == 1 ? "BULLISH" : trendDirection == -1 ? "BEARISH" : "NEUTRAL"
+    table.cell(infoTable, 0, 1, "Trend", 
+              text_color=color.new(color.white, 30), 
+              text_size=size.tiny)
+    table.cell(infoTable, 1, 1, trendText, 
+              text_color=centerColor, 
+              text_size=size.small)
+    
+    // ─────────────────────────────────────────────────────────────────────
+    // Strength Meter
+    // ─────────────────────────────────────────────────────────────────────
+    strengthMeter = ""
+    for i = 1 to 3
+        strengthMeter += i <= trendStrength ? "█" : "░"
+    table.cell(infoTable, 0, 2, "Strength", 
+              text_color=color.new(color.white, 30), 
+              text_size=size.tiny)
+    table.cell(infoTable, 1, 2, strengthMeter, 
+              text_color=centerColor, 
+              text_size=size.small)
+    
+    // ─────────────────────────────────────────────────────────────────────
+    // ADX Status
+    // ─────────────────────────────────────────────────────────────────────
+    adxText   = str.tostring(math.round(adxValue))
+    adxStatus = adxStrong ? " ✓" : " ⚠"
+    table.cell(infoTable, 0, 3, "ADX", 
+              text_color=color.new(color.white, 30), 
+              text_size=size.tiny)
+    table.cell(infoTable, 1, 3, adxText + adxStatus, 
+              text_color=adxStrong ? color.green : color.orange, 
+              text_size=size.small)
+    
+    // ─────────────────────────────────────────────────────────────────────
+    // DI Status
+    // ─────────────────────────────────────────────────────────────────────
+    diText  = diPlus > diMinus ? "+DI" : "-DI"
+    diValue = str.tostring(math.round(math.max(diPlus, diMinus)))
+    table.cell(infoTable, 0, 4, "Direction", 
+              text_color=color.new(color.white, 30), 
+              text_size=size.tiny)
+    table.cell(infoTable, 1, 4, diText + " " + diValue, 
+              text_color=color.white, 
+              text_size=size.tiny)
+    
+    // ─────────────────────────────────────────────────────────────────────
+    // Vortex
+    // ─────────────────────────────────────────────────────────────────────
+    if useVortex
+        vortexText = vortexDiff > 0.1 ? "↗" : 
+                     vortexDiff < -0.1 ? "↘" : "→"
+        table.cell(infoTable, 0, 5, "Vortex", 
+                  text_color=color.new(color.white, 30), 
+                  text_size=size.tiny)
+        table.cell(infoTable, 1, 5, vortexText + " " + str.tostring(vortexDiff, "#.##"), 
+                  text_color=color.white, 
+                  text_size=size.tiny)
+    
+    // ─────────────────────────────────────────────────────────────────────
+    // Momentum
+    // ─────────────────────────────────────────────────────────────────────
+    if useMomentumFlow
+        momText = momentumScore > 0.25 ? "↑↑" : 
+                  momentumScore > 0 ? "↑" : 
+                  momentumScore < -0.25 ? "↓↓" : 
+                  momentumScore < 0 ? "↓" : "—"
+        table.cell(infoTable, 0, 6, "Momentum", 
+                  text_color=color.new(color.white, 30), 
+                  text_size=size.tiny)
+        table.cell(infoTable, 1, 6, momText, 
+                  text_color=momentumScore > 0 ? bullPrimary : bearPrimary, 
+                  text_size=size.tiny)
+    
+    // ─────────────────────────────────────────────────────────────────────
+    // Volatility
+    // ─────────────────────────────────────────────────────────────────────
+    volText = volatilityRatio > 1.5 ? "High" : 
+              volatilityRatio > 1 ? "Med" : "Low"
+    table.cell(infoTable, 0, 7, "Volatility", 
+              text_color=color.new(color.white, 30), 
+              text_size=size.tiny)
+    table.cell(infoTable, 1, 7, volText, 
+              text_color=volatilityRatio > 1.5 ? color.red : color.green, 
+              text_size=size.tiny)
+
+// Candle coloring
+barcolor(showCandleColors and trendDirection == 1 ? bullPrimary : 
+         showCandleColors and trendDirection == -1 ? bearPrimary : 
+         showCandleColors and trendDirection == 0 ? neutralColor : na)
