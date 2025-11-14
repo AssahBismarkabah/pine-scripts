@@ -2,22 +2,61 @@
 // © BOSWaves
 
 //@version=6
-indicator("ADX Tide Zones", overlay=true, max_boxes_count=500, max_labels_count=100)
+indicator("ADX Tide Zones (Preset Config)", overlay=true, max_boxes_count=500, max_labels_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════
 // INPUTS
 // ═══════════════════════════════════════════════════════════════════════
 
 // ─────────────────────────────────────────────────────────────────────────
-// Core Parameters
+// Core Parameters & Timeframe Presets
 // ─────────────────────────────────────────────────────────────────────────
-src             = input.source(hlc3, "Price Source", group="Core Settings")
-adxLen          = input.int(21, "ADX Length", minval=8, maxval=50, group="Core Settings")
-emaLen          = input.int(15, "Center EMA", minval=5, maxval=50, group="Core Settings")
-spreadLen       = input.int(150, "Zone Spread Length", minval=50, maxval=300, group="Core Settings")
-kMult           = input.float(2.5, "Zone Multiplier", minval=1.0, maxval=5.0, step=0.1, group="Core Settings")
-adxThreshold    = input.int(25, "ADX Strength Filter", minval=15, maxval=40, group="Core Settings")
-smoothingFactor = input.int(5, "Smoothing Factor", minval=1, maxval=10, group="Core Settings")
+src = input.source(hlc3, "Price Source", group="Core Settings")
+timeframePreset = input.string(title="Timeframe Preset", defval="Day Trading", options=["Scalping", "Day Trading", "Swing Trading"], group="Core Settings")
+
+// -------------------------------------------------------------------------
+// DYNAMIC PARAMETER CALCULATION
+// -------------------------------------------------------------------------
+// These values change automatically based on the selected 'timeframePreset'
+var int adxLen_Calc = 21
+var int emaLen_Calc = 15
+var int spreadLen_Calc = 150
+var float kMult_Calc = 2.5
+var int adxThreshold_Calc = 25
+
+if timeframePreset == "Scalping"
+    // FAST: Highly responsive, tighter zones, lower ADX filter (best for 1M - 15M)
+    adxLen_Calc       := 14    // Shorter ADX for quick trend recognition
+    emaLen_Calc       := 10    // Fast Center Line (tight S/R)
+    spreadLen_Calc    := 80     // Zones react to recent volatility
+    kMult_Calc        := 2.2    // Tighter Zone Multiplier (more potential signals)
+    adxThreshold_Calc := 20    // Lower bar for confirmed trend
+else if timeframePreset == "Swing Trading"
+    // SLOW: Structural, wider zones, high ADX filter (best for 4H - Weekly)
+    adxLen_Calc       := 30    // Longer ADX for major trend confirmation
+    emaLen_Calc       := 25    // Heavy smoothing for Center Line
+    spreadLen_Calc    := 200   // Structural, slow-moving zones
+    kMult_Calc        := 3.0    // Wider Zones (high-quality, deeper pullbacks)
+    adxThreshold_Calc := 30    // High bar for confirmed trend
+else // Default to Day Trading
+    // BALANCED: Moderate speed and filtering (best for 30M - 2H)
+    adxLen_Calc       := 21
+    emaLen_Calc       := 15
+    spreadLen_Calc    := 120   // Moderately stable zones
+    kMult_Calc        := 2.5
+    adxThreshold_Calc := 25
+
+// Assign calculated values to variables used in the script
+adxLen       = adxLen_Calc
+emaLen       = emaLen_Calc
+spreadLen    = spreadLen_Calc
+kMult        = kMult_Calc
+adxThreshold = adxThreshold_Calc
+
+// -------------------------------------------------------------------------
+// Manual Overrides (Retained for user customization)
+// -------------------------------------------------------------------------
+smoothingFactor = input.int(5, "Smoothing Factor", minval=1, maxval=10, group="Core Settings (Fine Tuning)")
 
 // ─────────────────────────────────────────────────────────────────────────
 // Advanced Features
@@ -34,7 +73,7 @@ vortexPeriod      = input.int(14, "Vortex Period", minval=10, maxval=30, group="
 // Visual Configuration
 // ─────────────────────────────────────────────────────────────────────────
 showMainZones     = input.bool(true, "Show Main Zones", group="Visual Settings")
-showInnerZones    = input.bool(false, "Show Inner Zones", group="Visual Settings")
+showInnerZones    = input.bool(true, "Show Inner Zones (Entry Pullbacks)", group="Visual Settings") // Set to true by default for better visibility of entry points
 showSignals       = input.bool(true, "Show Entry Signals", group="Visual Settings")
 showPullbacks     = input.bool(true, "Show Pullback Opportunities", group="Visual Settings")
 showInfoPanel     = input.bool(true, "Show Information Panel", group="Visual Settings")
